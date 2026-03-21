@@ -1,11 +1,15 @@
-gateway:
+server:
   listen_port: 10000
   worker_threads: 4
 
 backend:
   game_servers:
-    - id: 1
-      host: 127.0.0.1
+    - type: "LOGIN" # 语义化标识
+      host: "127.0.0.1"
+      port: 9000
+      connections: 2
+    - type: "GAME"
+      host: "127.0.0.1"
       port: 9000
       connections: 4
 

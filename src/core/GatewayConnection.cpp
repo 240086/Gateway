@@ -2,6 +2,8 @@
 #include "network/protocol/PacketParser.h"
 #include "proxy/BackendConnection.h"
 #include "proxy/ProxyService.h"
+#include "common/logger/Logger.h"
+#include "network/protocol/Packet.h"
 #include <iostream>
 
 using boost::asio::ip::tcp;
@@ -11,11 +13,10 @@ GatewayConnection::GatewayConnection(tcp::socket socket)
 
 void GatewayConnection::Start()
 {
-    std::cout << "[Gateway] New connection\n";
-
     // 生成唯一 SessionId (简单示例：原子计数器)
     static std::atomic<uint32_t> s_id_gen{1000};
     sessionId_ = s_id_gen++;
+    LOG_INFO("[Gateway] New connection, sid={}", sessionId_);
     DoRead();
 }
 
@@ -27,11 +28,13 @@ void GatewayConnection::DoRead()
                             {
                                 if (!ec)
                                 {
+                                    Metrics::Instance().Inc("gateway.ingress_bytes", length);
                                     recvBuffer_.Append(buffer_.data(), length);
                                     parser_.Parse(recvBuffer_, [this, self](uint16_t msgId, const char *data, size_t len)
                                                   {
-                    // 交给 ProxyService 转发
-                    ProxyService::Instance().ForwardToBackend(self, msgId, data, len); });
+                                                    Metrics::Instance().Inc("gateway.recv_packets");
+                                                    // 交给 ProxyService 转发
+                                                    ProxyService::Instance().ForwardToBackend(self, msgId, data, len); });
                                     DoRead();
                                 }
                                 else
@@ -43,17 +46,15 @@ void GatewayConnection::DoRead()
 
 void GatewayConnection::SendRaw(uint16_t msgId, const char *data, size_t len)
 {
-    auto out = std::make_shared<std::vector<char>>(6 + len);
-    uint32_t netLen = htonl(len);
-    uint16_t netId = htons(msgId);
+    Packet pkt;
+    pkt.SetMessageId(msgId);
+    pkt.Append(data, len);
 
-    memcpy(out->data(), &netLen, 4);
-    memcpy(out->data() + 4, &netId, 2);
-    memcpy(out->data() + 6, data, len);
+    auto raw = std::make_shared<std::vector<char>>(pkt.Serialize());
 
     auto self = shared_from_this();
-    boost::asio::async_write(socket_, boost::asio::buffer(*out),
-                             [self, out](boost::system::error_code, std::size_t)
+    boost::asio::async_write(socket_, boost::asio::buffer(*raw),
+                             [self, raw](boost::system::error_code, std::size_t)
                              {
                                  // out 捕获在 lambda 中，保证了异步发送时的内存安全
                              });

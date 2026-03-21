@@ -6,6 +6,8 @@
 #include "network/buffer/RecvBuffer.h"
 #include "network/protocol/PacketParser.h"
 #include "proxy/BackendConnection.h"
+#include "common/metrics/Metrics.h"
+
 
 class GatewayConnection : public std::enable_shared_from_this<GatewayConnection>
 {

@@ -3,11 +3,13 @@
 #include <boost/asio.hpp>
 #include <memory>
 
-class GatewayServer {
+class GatewayServer
+{
 public:
-    GatewayServer(boost::asio::io_context& io, uint16_t port);
+    GatewayServer(boost::asio::io_context &io, uint16_t port);
 
     void Start();
+    void Stop();
 
 private:
     void DoAccept();

@@ -16,6 +16,7 @@ file(GLOB_RECURSE GATEWAY_SRC
     "src/core/*.cpp"
     "src/proxy/*.cpp"
     "src/config/*.cpp"
+    "src/router/*.cpp"
     "src/main.cpp"
 )
 

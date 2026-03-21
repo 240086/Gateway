@@ -8,18 +8,29 @@
 class BackendPool
 {
 public:
-    // 禁用拷贝
+    BackendPool() = default;
     BackendPool(const BackendPool &) = delete;
     BackendPool &operator=(const BackendPool &) = delete;
-    BackendPool() = default;
 
-    void Init(boost::asio::io_context &io, const std::string &host, uint16_t port, size_t size);
+    void Init(boost::asio::io_context &io,
+              const std::string &host,
+              uint16_t port,
+              size_t size);
 
-    // 获取一个可用的连接
     std::shared_ptr<BackendConnection> Acquire();
+
+    bool IsInitialized() const { return initialized_; }
 
 private:
     std::vector<std::shared_ptr<BackendConnection>> conns_;
+
+    // round-robin
     std::atomic<size_t> index_{0};
+
     std::mutex init_mutex_;
+
+    bool initialized_ = false;
+
+    // 🔥 健康统计（简化版）
+    std::atomic<size_t> aliveCount_{0};
 };

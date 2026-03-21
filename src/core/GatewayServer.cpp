@@ -1,5 +1,6 @@
 #include "core/GatewayServer.h"
 #include "core/GatewayConnection.h"
+#include "common/logger/Logger.h"
 #include <iostream>
 
 using boost::asio::ip::tcp;
@@ -9,7 +10,7 @@ GatewayServer::GatewayServer(boost::asio::io_context &io, uint16_t port)
 
 void GatewayServer::Start()
 {
-    std::cout << "[Gateway] Start accepting..." << std::endl;
+    LOG_INFO("[Gateway] Start accepting...");
     DoAccept();
 }
 
@@ -20,11 +21,28 @@ void GatewayServer::DoAccept()
         {
             if (!ec)
             {
-                std::cout << "[Gateway] New connection" << std::endl;
-
+                LOG_INFO("[Gateway] New connection");
                 std::make_shared<GatewayConnection>(std::move(socket))->Start();
             }
 
             DoAccept();
         });
+}
+
+void GatewayServer::Stop()
+{
+    LOG_INFO("[Gateway] Stopping acceptor...");
+    boost::system::error_code ec;
+
+    // 关闭监听器，停止接收新连接
+    acceptor_.close(ec);
+
+    if (ec)
+    {
+        LOG_ERROR("[Gateway] Error closing acceptor: {}", ec.message());
+    }
+    else
+    {
+        LOG_INFO("[Gateway] Acceptor closed successfully.");
+    }
 }
