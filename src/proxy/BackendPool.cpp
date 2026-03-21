@@ -1,4 +1,4 @@
-#include "gateway/proxy/BackendPool.h"
+#include "proxy/BackendPool.h"
 
 void BackendPool::Init(boost::asio::io_context &io, const std::string &host, uint16_t port, size_t size)
 {

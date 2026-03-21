@@ -3,9 +3,9 @@
 #include <boost/asio.hpp>
 #include <array>
 #include <memory>
-#include "gateway/network/buffer/RecvBuffer.h"
-#include "gateway/network/protocol/PacketParser.h"
-#include "gateway/proxy/BackendConnection.h"
+#include "network/buffer/RecvBuffer.h"
+#include "network/protocol/PacketParser.h"
+#include "proxy/BackendConnection.h"
 
 class GatewayConnection : public std::enable_shared_from_this<GatewayConnection>
 {

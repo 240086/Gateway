@@ -2,7 +2,7 @@
 #include <memory>
 #include <unordered_map>
 #include <mutex>
-#include "gateway/proxy/BackendPool.h"
+#include "proxy/BackendPool.h"
 
 class GatewayConnection;
 

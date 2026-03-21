@@ -1,5 +1,5 @@
-#include "gateway/core/GatewayServer.h"
-#include "gateway/proxy/ProxyService.h"
+#include "core/GatewayServer.h"
+#include "proxy/ProxyService.h"
 #include <boost/asio.hpp>
 #include <iostream>
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gateway/network/buffer/RecvBuffer.h"
+#include "network/buffer/RecvBuffer.h"
 #include <functional>
 #include <cstdint>
 

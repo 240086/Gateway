@@ -1,4 +1,4 @@
-#include "gateway/network/buffer/RecvBuffer.h"
+#include "network/buffer/RecvBuffer.h"
 
 void RecvBuffer::Append(const char* data, size_t len)
 {

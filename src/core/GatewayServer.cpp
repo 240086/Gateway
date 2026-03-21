@@ -1,5 +1,5 @@
-#include "gateway/core/GatewayServer.h"
-#include "gateway/core/GatewayConnection.h"
+#include "core/GatewayServer.h"
+#include "core/GatewayConnection.h"
 #include <iostream>
 
 using boost::asio::ip::tcp;

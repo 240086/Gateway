@@ -2,8 +2,8 @@
 #include <boost/asio.hpp>
 #include <memory>
 #include <vector>
-#include "gateway/network/buffer/RecvBuffer.h"
-#include "gateway/network/protocol/PacketParser.h"
+#include "network/buffer/RecvBuffer.h"
+#include "network/protocol/PacketParser.h"
 
 class GatewayConnection;
 

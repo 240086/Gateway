@@ -1,7 +1,7 @@
-#include "gateway/core/GatewayConnection.h"
-#include "gateway/network/protocol/PacketParser.h"
-#include "gateway/proxy/BackendConnection.h"
-#include "gateway/proxy/ProxyService.h"
+#include "core/GatewayConnection.h"
+#include "network/protocol/PacketParser.h"
+#include "proxy/BackendConnection.h"
+#include "proxy/ProxyService.h"
 #include <iostream>
 
 using boost::asio::ip::tcp;

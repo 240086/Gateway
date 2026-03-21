@@ -1,4 +1,4 @@
-#include "gateway/network/protocol/PacketParser.h"
+#include "network/protocol/PacketParser.h"
 #include <cstring>
 #include <boost/asio/detail/socket_ops.hpp>
 #include <iostream>

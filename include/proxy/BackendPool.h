@@ -3,7 +3,7 @@
 #include <memory>
 #include <atomic>
 #include <mutex>
-#include "gateway/proxy/BackendConnection.h"
+#include "proxy/BackendConnection.h"
 
 class BackendPool
 {
