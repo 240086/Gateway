@@ -5,6 +5,7 @@
 #include "common/logger/Logger.h"
 #include "network/protocol/Packet.h"
 #include "limit/RateLimiter.h"
+#include "core/IdleManager.h"
 #include <iostream>
 
 using boost::asio::ip::tcp;
@@ -17,6 +18,10 @@ void GatewayConnection::Start()
     // 生成唯一 SessionId (简单示例：原子计数器)
     static std::atomic<uint32_t> s_id_gen{1000};
     sessionId_ = s_id_gen++;
+    UpdateActivity();
+    IdleManager::Instance().Add(sessionId_, shared_from_this());
+
+    Metrics::Instance().Inc(MetricId::ConnectionActive);
     LOG_INFO("[Gateway] New connection, sid={}", sessionId_);
     DoRead();
 }
@@ -29,7 +34,7 @@ void GatewayConnection::DoRead()
                             {
                                 if (!ec)
                                 {
-                                    Metrics::Instance().Inc("gateway.ingress_bytes", length);
+                                    UpdateActivity();
                                     recvBuffer_.Append(buffer_.data(), length);
                                     parser_.Parse(recvBuffer_, [this, self](uint16_t msgId, const char *data, size_t len)
                                                   {
@@ -39,14 +44,15 @@ void GatewayConnection::DoRead()
                                                         LOG_WARN("[RateLimit] sid={} blocked", sessionId_);
                                                         return;
                                                     } 
-                                                    Metrics::Instance().Inc("gateway.recv_packets");
                                                     // 交给 ProxyService 转发
                                                     ProxyService::Instance().ForwardToBackend(self, msgId, data, len); });
                                     DoRead();
                                 }
                                 else
                                 {
+                                    Metrics::Instance().Add(MetricId::ConnectionActive, -1);
                                     ProxyService::Instance().RemoveSession(sessionId_);
+                                    HandleDisconnect();
                                 }
                             });
 }
@@ -61,8 +67,28 @@ void GatewayConnection::SendRaw(uint16_t msgId, const char *data, size_t len)
 
     auto self = shared_from_this();
     boost::asio::async_write(socket_, boost::asio::buffer(*raw),
-                             [self, raw](boost::system::error_code, std::size_t)
+                             [this, self, raw](const boost::system::error_code &ec, std::size_t)
                              {
+                                 if (!ec)
+                                     UpdateActivity();
                                  // out 捕获在 lambda 中，保证了异步发送时的内存安全
                              });
+}
+
+void GatewayConnection::Close()
+{
+    boost::system::error_code ec;
+    socket_.close(ec); // 强制关闭 Socket，会触发 DoRead 里的 ec 逻辑
+}
+
+void GatewayConnection::HandleDisconnect()
+{
+    // 统一资源清理逻辑
+    Metrics::Instance().Add(MetricId::ConnectionActive, -1);
+
+    // 1. 从 ProxyService 移除（清理挂起的请求）
+    ProxyService::Instance().RemoveSession(sessionId_);
+
+    // 2. 从 IdleManager 移除（停止心跳检查）
+    IdleManager::Instance().Remove(sessionId_);
 }

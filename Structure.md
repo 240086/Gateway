@@ -6,7 +6,8 @@ Gateway
 ├─ include
 │  ├─ core
 │  │  ├─ GatewayConnection.h
-│  │  └─ GatewayServer.h
+│  │  ├─ GatewayServer.h
+│  │  └─ IdleManager.h
 │  ├─ limit
 │  │  └─ RateLimiter.h
 │  ├─ proxy
@@ -24,7 +25,8 @@ Gateway
 ├─ src
 │  ├─ core
 │  │  ├─ GatewayConnection.cpp
-│  │  └─ GatewayServer.cpp
+│  │  ├─ GatewayServer.cpp
+│  │  └─ IdleManager.cpp
 │  ├─ limit
 │  │  └─ RateLimiter.cpp
 │  ├─ main.cpp

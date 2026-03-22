@@ -2,6 +2,7 @@
 #include "proxy/ProxyService.h"
 #include "common/logger/Logger.h"
 #include <algorithm>
+#include "common/metrics/Metrics.h"
 
 RequestManager &RequestManager::Instance()
 {
@@ -25,10 +26,13 @@ void RequestManager::Add(uint32_t sid, uint16_t msgId, uint32_t seqId)
     size_t rIdx = GetReqShardIdx(key);
     size_t sIdx = GetSessShardIdx(sid);
 
-    // 1. 写入 Request 字典 (细粒度锁)
+    uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+
     {
         std::lock_guard<std::mutex> lock(requestShards_[rIdx].mtx);
-        requestShards_[rIdx].map[key] = {timer};
+        requestShards_[rIdx].map[key] = {timer, nowUs}; // ✅ 修改
     }
 
     // 2. 写入 Session 索引 (细粒度锁)
@@ -41,6 +45,7 @@ void RequestManager::Add(uint32_t sid, uint16_t msgId, uint32_t seqId)
                       {
         if (!ec)
         {
+            Metrics::Instance().Inc(MetricId::RequestTimeout);
             LOG_WARN("[Timeout] sid={}, msgId={}, seqId={}", key.sid, key.msgId, key.seqId);
             // ProxyService::Instance().OnBackendReply(key.sid, key.msgId, key.seqId, nullptr, 0);
             this->RemoveSingleRequest(key);
@@ -53,12 +58,14 @@ bool RequestManager::OnReply(uint32_t sid, uint16_t msgId, uint32_t seqId)
     size_t rIdx = GetReqShardIdx(key);
 
     bool found = false;
+    uint64_t startUs = 0;
     {
         std::lock_guard<std::mutex> lock(requestShards_[rIdx].mtx);
         auto it = requestShards_[rIdx].map.find(key);
         if (it != requestShards_[rIdx].map.end())
         {
             it->second.timer->cancel();
+            startUs = it->second.startTimeUs;
             requestShards_[rIdx].map.erase(it);
             found = true;
         }
@@ -67,6 +74,11 @@ bool RequestManager::OnReply(uint32_t sid, uint16_t msgId, uint32_t seqId)
     if (!found)
         return false;
 
+    uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+
+    Metrics::Instance().ObserveLatency(nowUs - startUs);
     // 清理索引
     size_t sIdx = GetSessShardIdx(sid);
     {

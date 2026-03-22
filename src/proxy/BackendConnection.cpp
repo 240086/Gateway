@@ -46,6 +46,7 @@ void BackendConnection::DoConnect()
                                                               else
                                                               {
                                                                   LOG_ERROR("[Backend] Connect failed: {}", ec.message());
+                                                                  OnFailure();
                                                                   ScheduleReconnect();
                                                               }
                                                           }));
@@ -60,8 +61,6 @@ void BackendConnection::Send(std::shared_ptr<std::vector<char>> packet)
                       {
                           if (state_ != State::CONNECTED)
                               return;
-                          Metrics::Instance().Inc("backend.send_bytes", packet->size());
-                          Metrics::Instance().Inc("backend.send_packets");
                           bool writing = !writeQueue_.empty();
                           writeQueue_.push_back(packet);
 
@@ -86,11 +85,11 @@ void BackendConnection::DoRead()
                                        if (!ec)
                                        {
                                            recvBuffer_.Append(buffer->data(), len);
-                                           Metrics::Instance().Inc("backend.recv_bytes", len);
                                            internalParser_.Parse(
                                                recvBuffer_,
                                                [this](uint32_t sid, uint16_t msgId, uint32_t seqId, const char *data, size_t len)
                                                {
+                                                   OnSuccess();
                                                    ProxyService::Instance().OnBackendReply(sid, msgId, seqId, data, len);
                                                });
 
@@ -127,6 +126,7 @@ void BackendConnection::DoWrite()
                                        else
                                        {
                                            LOG_ERROR("[Backend] Write failed: {}", ec.message());
+                                           OnFailure();
                                            HandleClose();
                                        }
                                    }));
@@ -135,7 +135,6 @@ void BackendConnection::DoWrite()
 void BackendConnection::HandleClose()
 {
     auto self = shared_from_this();
-    Metrics::Instance().Inc("backend.disconnect");
     boost::asio::post(strand_,
                       [this, self]()
                       {
@@ -170,4 +169,47 @@ void BackendConnection::ScheduleReconnect()
                 DoConnect();
             }
         });
+}
+
+bool BackendConnection::IsAvailable() const
+{
+    auto state = cbState_.load(std::memory_order_relaxed);
+
+    if (state == CBState::CLOSED)
+        return state_ == State::CONNECTED;
+
+    if (state == CBState::OPEN)
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (now - lastFailTime_ > std::chrono::seconds(OPEN_TIMEOUT_SEC))
+        {
+            // 进入 HALF_OPEN
+            const_cast<BackendConnection *>(this)->cbState_ = CBState::HALF_OPEN;
+            return state_ == State::CONNECTED;
+        }
+        return false;
+    }
+
+    // HALF_OPEN
+    return state_ == State::CONNECTED;
+}
+
+void BackendConnection::OnSuccess()
+{
+    Metrics::Instance().Inc(MetricId::CircuitBreakerOpen);
+    failCount_.store(0, std::memory_order_relaxed);
+    cbState_ = CBState::CLOSED;
+}
+
+void BackendConnection::OnFailure()
+{
+    uint32_t fails = failCount_.fetch_add(1) + 1;
+    lastFailTime_ = std::chrono::steady_clock::now();
+    Metrics::Instance().Inc(MetricId::BackendFail);
+
+    if (fails >= FAIL_THRESHOLD)
+    {
+        cbState_ = CBState::OPEN;
+        LOG_WARN("[CircuitBreaker] OPEN triggered");
+    }
 }

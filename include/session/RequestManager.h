@@ -51,6 +51,7 @@ private:
     struct Context
     {
         std::shared_ptr<boost::asio::steady_timer> timer;
+        uint64_t startTimeUs;
     };
 
     static constexpr size_t SHARD_COUNT = 64;

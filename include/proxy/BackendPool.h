@@ -17,8 +17,6 @@ public:
               uint16_t port,
               size_t size);
 
-    std::shared_ptr<BackendConnection> Acquire();
-
     std::shared_ptr<BackendConnection> AcquireByShard(uint32_t shardId);
 
         bool IsInitialized() const

@@ -3,6 +3,8 @@
 #include <boost/asio.hpp>
 #include <array>
 #include <memory>
+#include <atomic>
+#include <chrono>
 #include "network/buffer/RecvBuffer.h"
 #include "network/protocol/PacketParser.h"
 #include "proxy/BackendConnection.h"
@@ -17,14 +19,14 @@ public:
 
     void SendRaw(uint16_t msgId, const char *data, size_t len);
 
-    uint32_t GetSessionId() const { return sessionId_; }
+    inline uint32_t GetSessionId() const { return sessionId_; }
 
-    uint32_t NextSeqId()
+    inline uint32_t NextSeqId()
     {
         return seqId_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    uint32_t GetRemoteIP() const
+    inline uint32_t GetRemoteIP() const
     {
         try
         {
@@ -37,8 +39,28 @@ public:
         }
     }
 
+    void UpdateActivity()
+    {
+        lastActiveTime_.store(NowUs(), std::memory_order_relaxed);
+    }
+
+    uint64_t GetLastActiveTime() const
+    {
+        return lastActiveTime_.load(std::memory_order_relaxed);
+    }
+
+    void Close();
+    void HandleDisconnect();
+
 private:
     void DoRead();
+
+    inline static uint64_t NowUs()
+    {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
 
 private:
     boost::asio::ip::tcp::socket socket_;
@@ -50,4 +72,6 @@ private:
 
     std::shared_ptr<BackendConnection> backend_;
     std::atomic<uint32_t> seqId_{0};
+
+    std::atomic<uint64_t> lastActiveTime_{0};
 };

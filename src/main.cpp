@@ -10,6 +10,7 @@
 #include "common/metrics/MetricsReporter.h"
 #include "limit/RateLimiter.h"
 #include "session/RequestManager.h"
+#include "core/IdleManager.h"
 
 /**
  * @brief 优雅退出逻辑：停止 IO 循环并清理资源
@@ -58,6 +59,7 @@ int main()
             config.GetSidBurst());
 
         RequestManager::Instance().Init(io, config.GetBackendRequestTimeout());
+        IdleManager::Instance().Init(io, config.GetClientIdleTimeout());
 
         // --------------------------------------------------------
         // 🎮 业务组件初始化 (Business Logic Init)

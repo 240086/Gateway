@@ -20,6 +20,12 @@ public:
         CONNECTED,
         RECONNECTING
     };
+    enum class CBState
+    {
+        CLOSED,
+        OPEN,
+        HALF_OPEN
+    };
 
 public:
     explicit BackendConnection(boost::asio::io_context &io);
@@ -27,7 +33,7 @@ public:
     void Connect(const std::string &host, uint16_t port);
 
     bool IsConnected() const { return state_ == State::CONNECTED; }
-
+    bool IsAvailable() const;
     void Send(std::shared_ptr<std::vector<char>> packet);
 
 private:
@@ -37,6 +43,9 @@ private:
 
     void HandleClose();
     void ScheduleReconnect();
+
+    void OnSuccess();
+    void OnFailure();
 
 private:
     boost::asio::ip::tcp::socket socket_;
@@ -56,4 +65,13 @@ private:
     // 写队列（关键！）
     std::deque<std::shared_ptr<std::vector<char>>> writeQueue_;
     boost::asio::strand<boost::asio::io_context::executor_type> strand_;
+
+    std::atomic<CBState> cbState_{CBState::CLOSED};
+
+    std::atomic<uint32_t> failCount_{0};
+
+    std::chrono::steady_clock::time_point lastFailTime_;
+
+    static constexpr uint32_t FAIL_THRESHOLD = 5;
+    static constexpr int OPEN_TIMEOUT_SEC = 5;
 };

@@ -56,7 +56,7 @@ void ProxyService::ForwardToBackend(
     if (!RateLimiter::Instance().Allow(sid, ip))
     {
         LOG_WARN("[RateLimit] Blocked request: sid={}, ip={}", sid, ip);
-
+        Metrics::Instance().Inc(MetricId::RateLimitHit);
         // 可选：返回错误包
         client->SendRaw(msgId, nullptr, 0);
         return;
@@ -85,7 +85,7 @@ void ProxyService::ForwardToBackend(
 
     if (!backend)
     {
-        Metrics::Instance().Inc("proxy.forward.fail");
+        Metrics::Instance().Inc(MetricId::ProxyForwardFail);
         LOG_ERROR("[Proxy] No backend available for shard {}", shardId);
         // todo: 给客户端回发系统繁忙的错误包
         return;
@@ -107,7 +107,8 @@ void ProxyService::ForwardToBackend(
     pkt.SetSequenceId(seqId); // 🔥 必须注入 seqId
     pkt.Append(data, len);
 
-    Metrics::Instance().Inc("proxy.forward.total");
+    LOG_DEBUG("[FLOW] C->G sid={} msgId={} seqId={}", sid, msgId, seqId);
+    Metrics::Instance().Inc(MetricId::ProxyForwardTotal);
     backend->Send(std::make_shared<std::vector<char>>(pkt.Serialize()));
 }
 
@@ -126,7 +127,7 @@ void ProxyService::OnBackendReply(
         return; // 直接丢弃，防止客户端状态机混乱
     }
 
-    Metrics::Instance().Inc("proxy.reply.total");
+    Metrics::Instance().Inc(MetricId::ProxyReplyTotal);
     std::shared_ptr<GatewayConnection> client;
 
     // 2. 查找并锁定对应的客户端连接
@@ -150,7 +151,8 @@ void ProxyService::OnBackendReply(
         LOG_DEBUG("[Proxy] Session expired. Reply dropped. sid={}", sid);
         return;
     }
-
+    
+    LOG_DEBUG("[FLOW] G->C sid={} msgId={} seqId={}", sid, msgId, seqId);
     // 4. 完美闭环：将数据透传回客户端
     client->SendRaw(msgId, data, len);
 }
