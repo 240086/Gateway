@@ -20,3 +20,9 @@ routing:
 timeout:
   backend_request_ms: 1500
   client_idle_ms: 60000
+
+limit:
+  ip_qps: 200
+  ip_burst: 400
+  sid_qps: 50
+  sid_burst: 100

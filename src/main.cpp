@@ -4,10 +4,12 @@
 
 #include "core/GatewayServer.h"
 #include "proxy/ProxyService.h"
-#include "router/MessageRouter.h" // 假设你已定义路由组件
+#include "router/MessageRouter.h"
 #include "common/config/Config.h"
 #include "common/logger/Logger.h"
 #include "common/metrics/MetricsReporter.h"
+#include "limit/RateLimiter.h"
+#include "session/RequestManager.h"
 
 /**
  * @brief 优雅退出逻辑：停止 IO 循环并清理资源
@@ -29,12 +31,10 @@ void GracefulExit(boost::asio::io_context &io, GatewayServer &server)
 
 int main()
 {
-    // 1. 基础 Logger 初始化（最先启动，确保后续所有步骤可查）
     Logger::Init();
 
     try
     {
-        // 2. 加载配置（唯一真源）
         if (!Config::Instance().Load("gateway.yaml"))
         {
             LOG_FATAL("Critical: Cannot find gateway.yaml. Gateway terminated.");
@@ -47,18 +47,29 @@ int main()
         MetricsReporter reporter(io);
         reporter.Start();
 
-        // 3. 初始化路由大脑 (从 YAML 读取 login_range, game_range)
-        MessageRouter::Instance().Init();
+        // --------------------------------------------------------
+        // 🔥 基础设施初始化 (Infrastructure Init)
+        // --------------------------------------------------------
 
-        // 4. 初始化 Proxy 模块 (内部自动从 Config 读取后端列表并建立连接池)
+        RateLimiter::Instance().Init(
+            config.GetIpQps(),
+            config.GetIpBurst(),
+            config.GetSidQps(),
+            config.GetSidBurst());
+
+        RequestManager::Instance().Init(io, config.GetBackendRequestTimeout());
+
+        // --------------------------------------------------------
+        // 🎮 业务组件初始化 (Business Logic Init)
+        // --------------------------------------------------------
+
+        MessageRouter::Instance().Init();
         ProxyService::Instance().Init(io);
 
-        // 5. 实例化并准备启动服务
         int gPort = config.GetGatewayPort();
         GatewayServer server(io, gPort);
         server.Start();
 
-        // 6. 注册信号处理实现“优雅退出”
         boost::asio::signal_set signals(io, SIGINT, SIGTERM);
         signals.async_wait([&io, &server](const boost::system::error_code &ec, int signal_number)
                            {
@@ -67,16 +78,13 @@ int main()
                 GracefulExit(io, server);
             } });
 
-        // 7. 打印规范的启动横幅 (Banner)
         LOG_INFO("================================================");
         LOG_INFO("AnimeGame Gateway Server [Active]");
         LOG_INFO("Listen Port    : {}", gPort);
         LOG_INFO("Worker Threads : {}", config.GetWorkerThreads());
         LOG_INFO("Config Status  : Loaded Successfully");
-        LOG_INFO("Press Ctrl+C to shutdown safely.");
         LOG_INFO("================================================");
 
-        // 8. 开启 IO 循环（阻塞直到 io.stop() 被调用）
         io.run();
     }
     catch (const std::exception &e)

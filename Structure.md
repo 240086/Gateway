@@ -7,28 +7,36 @@ Gateway
 │  ├─ core
 │  │  ├─ GatewayConnection.h
 │  │  └─ GatewayServer.h
+│  ├─ limit
+│  │  └─ RateLimiter.h
 │  ├─ proxy
 │  │  ├─ BackendConnection.h
 │  │  ├─ BackendPool.h
 │  │  └─ ProxyService.h
 │  ├─ router
 │  │  ├─ MessageRouter.h
-│  │  └─ Router.h
+│  │  ├─ Router.h
+│  │  └─ ShardManager.h
 │  └─ session
+│     └─ RequestManager.h
 ├─ logs
 │  └─ server_log_2026-03-21.txt
 ├─ src
 │  ├─ core
 │  │  ├─ GatewayConnection.cpp
 │  │  └─ GatewayServer.cpp
+│  ├─ limit
+│  │  └─ RateLimiter.cpp
 │  ├─ main.cpp
 │  ├─ proxy
 │  │  ├─ BackendConnection.cpp
 │  │  ├─ BackendPool.cpp
 │  │  └─ ProxyService.cpp
 │  ├─ router
-│  │  └─ MessageRouter.cpp
+│  │  ├─ MessageRouter.cpp
+│  │  └─ ShardManager.cpp
 │  └─ session
+│     └─ RequestManager.cpp
 ├─ Structure.md
 └─ third_party
    └─ AnimeCore

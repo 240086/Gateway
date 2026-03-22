@@ -4,6 +4,7 @@
 #include "proxy/ProxyService.h"
 #include "common/logger/Logger.h"
 #include "network/protocol/Packet.h"
+#include "limit/RateLimiter.h"
 #include <iostream>
 
 using boost::asio::ip::tcp;
@@ -32,6 +33,12 @@ void GatewayConnection::DoRead()
                                     recvBuffer_.Append(buffer_.data(), length);
                                     parser_.Parse(recvBuffer_, [this, self](uint16_t msgId, const char *data, size_t len)
                                                   {
+                                                    uint32_t ip = socket_.remote_endpoint().address().to_v4().to_uint();
+                                                    if (!RateLimiter::Instance().Allow(sessionId_, ip))
+                                                    {
+                                                        LOG_WARN("[RateLimit] sid={} blocked", sessionId_);
+                                                        return;
+                                                    } 
                                                     Metrics::Instance().Inc("gateway.recv_packets");
                                                     // 交给 ProxyService 转发
                                                     ProxyService::Instance().ForwardToBackend(self, msgId, data, len); });

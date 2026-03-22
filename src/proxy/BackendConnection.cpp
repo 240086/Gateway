@@ -32,7 +32,6 @@ void BackendConnection::DoConnect()
 
     boost::asio::ip::tcp::resolver resolver(socket_.get_executor());
     auto endpoints = resolver.resolve(host_, std::to_string(port_));
-    Metrics::Instance().Inc("backend.connect_success");
     boost::asio::async_connect(socket_, endpoints,
                                boost::asio::bind_executor(strand_,
                                                           [this, self](boost::system::error_code ec, auto)
@@ -90,9 +89,9 @@ void BackendConnection::DoRead()
                                            Metrics::Instance().Inc("backend.recv_bytes", len);
                                            internalParser_.Parse(
                                                recvBuffer_,
-                                               [this](uint32_t sid, uint16_t msgId, const char *data, size_t len)
+                                               [this](uint32_t sid, uint16_t msgId, uint32_t seqId, const char *data, size_t len)
                                                {
-                                                   ProxyService::Instance().OnBackendReply(sid, msgId, data, len);
+                                                   ProxyService::Instance().OnBackendReply(sid, msgId, seqId, data, len);
                                                });
 
                                            DoRead();

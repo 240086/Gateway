@@ -19,7 +19,12 @@ public:
 
     std::shared_ptr<BackendConnection> Acquire();
 
-    bool IsInitialized() const { return initialized_; }
+    std::shared_ptr<BackendConnection> AcquireByShard(uint32_t shardId);
+
+        bool IsInitialized() const
+    {
+        return initialized_;
+    }
 
 private:
     std::vector<std::shared_ptr<BackendConnection>> conns_;
