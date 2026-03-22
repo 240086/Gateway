@@ -14,8 +14,8 @@ backend:
       connections: 4
 
 routing:
-  login_range: [0, 999]
-  game_range: [1000, 1999]
+  login_range: [100, 999]    # 转发至 LOGIN 节点
+  game_range: [1000, 4999]   # 转发至 GAME 节点
 
 timeout:
   backend_request_ms: 1500
