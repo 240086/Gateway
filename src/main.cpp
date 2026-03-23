@@ -10,6 +10,7 @@
 #include "network/TcpServer.h"
 #include "network/Connection.h"
 #include "network/asio/AsioContextPool.h"
+#include "network/protocol/ClientPacketParser.h"
 
 // 网关核心
 #include "proxy/ProxyService.h"
@@ -98,7 +99,7 @@ int main()
             // 🔹 Connection Factory
             [](boost::asio::io_context &io)
             {
-                return std::make_shared<Connection>(io);
+                return std::make_shared<Connection>(io, Callbacks{}, Options{});
             },
 
             // 🔥 Gateway逻辑注入（核心）
@@ -115,19 +116,20 @@ int main()
 
                 LOG_INFO("[Gateway] New connection sid={}", sid);
 
+                conn->SetParser(std::make_unique<ClientPacketParser>());
+
                 Callbacks cb;
 
                 // -----------------------------
                 // 收包 → 转发到后端
                 // -----------------------------
-                cb.onPacket =
-                    [](const std::shared_ptr<Connection> &conn,
-                       uint16_t msgId,
-                       const char *data,
-                       size_t len)
+                cb.onPacket = [](const std::shared_ptr<Connection> &conn, std::shared_ptr<IMessage> msg)
                 {
-                    ProxyService::Instance().ForwardToBackend(
-                        conn, msgId, data, len);
+                    uint16_t msgId = msg->GetMsgId();
+                    const char *data = msg->GetData();
+                    size_t len = msg->GetDataLen();
+
+                    ProxyService::Instance().ForwardToBackend(conn, msgId, data, len);
                 };
 
                 // -----------------------------

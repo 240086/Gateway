@@ -2,6 +2,7 @@
 #include "proxy/ProxyService.h"
 #include "common/logger/Logger.h"
 #include "common/metrics/Metrics.h"
+#include "network/protocol/InternalPacket.h"
 #include <iostream>
 
 using boost::asio::ip::tcp;
@@ -54,6 +55,12 @@ void BackendConnection::DoConnect()
 
 void BackendConnection::Send(std::shared_ptr<std::vector<char>> packet)
 {
+    if (!IsAvailable())
+    {
+        LOG_WARN("[Backend] Circuit breaker is OPEN. Dropping packet.");
+        return;
+    }
+
     auto self = shared_from_this();
 
     boost::asio::post(strand_,
@@ -74,7 +81,6 @@ void BackendConnection::Send(std::shared_ptr<std::vector<char>> packet)
 void BackendConnection::DoRead()
 {
     auto self = shared_from_this();
-
     auto buffer = std::make_shared<std::array<char, 4096>>();
 
     socket_.async_read_some(
@@ -84,22 +90,40 @@ void BackendConnection::DoRead()
                                    {
                                        if (!ec)
                                        {
+                                           // 1. 将原始数据存入 Buffer
                                            recvBuffer_.Append(buffer->data(), len);
-                                           internalParser_.Parse(
-                                               recvBuffer_,
-                                               [this](uint32_t sid, uint16_t msgId, uint32_t seqId, const char *data, size_t len)
-                                               {
-                                                   OnSuccess();
-                                                   ProxyService::Instance().OnBackendReply(sid, msgId, seqId, data, len);
-                                               });
 
+                                           // 2. 准备一个临时容器接收解析出来的消息对象
+                                           std::vector<std::shared_ptr<IMessage>> messages;
+
+                                           // 3. ✅ 调用新接口
+                                           internalParser_.Parse(recvBuffer_, messages);
+
+                                           // 4. 遍历解析出的消息并处理
+                                           for (auto &msg : messages)
+                                           {
+                                               // 熔断器计数
+                                               OnSuccess();
+
+                                               // 因为是内网包，我们知道它一定是 InternalPacket
+                                               auto internalPkg = std::static_pointer_cast<InternalPacket>(msg);
+
+                                               // 触发 ProxyService 的回包逻辑
+                                               ProxyService::Instance().OnBackendReply(
+                                                   internalPkg->GetSessionId(),
+                                                   internalPkg->GetMsgId(),
+                                                   internalPkg->GetSequenceId(),
+                                                   internalPkg->GetData(),
+                                                   internalPkg->GetDataLen());
+                                           }
+
+                                           // 继续下一轮读
                                            DoRead();
                                        }
                                        else
                                        {
                                            LOG_WARN("[Backend] Connection lost: {}", ec.message());
                                            HandleClose();
-                                           // TODO: 后续我们会加自动重连
                                        }
                                    }));
 }
