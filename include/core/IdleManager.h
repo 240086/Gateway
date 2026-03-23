@@ -7,8 +7,7 @@
 #include <vector>
 #include <chrono>
 #include <boost/asio.hpp>
-
-class GatewayConnection;
+#include "network/Connection.h"
 
 class IdleManager
 {
@@ -19,7 +18,7 @@ public:
     void Init(boost::asio::io_context &io, uint64_t timeoutMs);
 
     // 注册连接
-    void Add(uint32_t sid, std::shared_ptr<GatewayConnection> conn);
+    void Add(uint32_t sid, std::shared_ptr<Connection> conn);
 
     // 手动移除（如玩家正常下线）
     void Remove(uint32_t sid);
@@ -33,7 +32,7 @@ private:
     struct IdleShard
     {
         std::mutex mtx;
-        std::unordered_map<uint32_t, std::weak_ptr<GatewayConnection>> conns;
+        std::unordered_map<uint32_t, std::weak_ptr<Connection>> conns;
     };
 
     std::array<IdleShard, SHARD_COUNT> shards_;

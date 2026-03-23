@@ -7,9 +7,7 @@
 
 #include "proxy/BackendPool.h"
 #include "router/MessageRouter.h"
-
-// 前置声明，避免头文件循环依赖
-class GatewayConnection;
+#include "network/Connection.h"
 
 class ProxyService
 {
@@ -20,7 +18,7 @@ public:
     void Init(boost::asio::io_context &io);
 
     // 接收来自客户端的数据，转发给对应的后端
-    void ForwardToBackend(std::shared_ptr<GatewayConnection> client,
+    void ForwardToBackend(std::shared_ptr<Connection> client,
                           uint16_t msgId,
                           const char *data,
                           size_t len);
@@ -45,6 +43,7 @@ private:
     // 会话映射表保护锁
     std::mutex mtx_;
 
-    // 🔥 必须使用 weak_ptr！防止 GatewayConnection 的循环引用导致内存泄漏
-    std::unordered_map<uint32_t, std::weak_ptr<GatewayConnection>> sessions_;
+    // 🔥 必须使用 weak_ptr！防止 Connection 的循环引用导致内存泄漏
+    std::unordered_map<uint32_t, std::weak_ptr<Connection>> sessions_;
+
 };

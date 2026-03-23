@@ -1,5 +1,4 @@
 #include "proxy/ProxyService.h"
-#include "core/GatewayConnection.h"
 #include "common/logger/Logger.h"
 #include "network/protocol/InternalPacket.h"
 #include "common/config/Config.h"
@@ -16,99 +15,103 @@ ProxyService &ProxyService::Instance()
 
 void ProxyService::Init(boost::asio::io_context &io)
 {
-    auto servers = Config::Instance().GetGameServers();
+    auto &config = Config::Instance();
 
-    for (const auto &node : servers)
+    // 1. 获取 backend.game_servers 列表节点
+    auto serversNode = config.GetNode("backend.game_servers");
+
+    // 2. 检查节点是否有效（是一个列表）
+    if (!serversNode.IsSequence())
     {
-        ServerType type = StringToServerType(node.typeStr);
+        LOG_ERROR("[Proxy] backend.game_servers is missing or not a list in config!");
+        return;
+    }
+
+    // 3. 遍历列表中的每一个服务器配置项
+    for (const auto &item : serversNode)
+    {
+        // 从当前 item 节点中解析具体字段，并提供默认值
+        std::string typeStr = item["type"].as<std::string>("UNKNOWN");
+        std::string host = item["host"].as<std::string>("127.0.0.1");
+        int port = item["port"].as<int>(9000);
+        int connections = item["connections"].as<int>(1);
+
+        // 转换类型
+        ServerType type = StringToServerType(typeStr);
         if (type == ServerType::UNKNOWN)
         {
-            LOG_ERROR("[Proxy] Ignoring unknown server type in config: {}", node.typeStr);
+            LOG_ERROR("[Proxy] Ignoring unknown server type in config: {}", typeStr);
             continue;
         }
 
         LOG_INFO("[Proxy] Initializing Pool: [{}] -> {}:{} (Conns: {})",
-                 node.typeStr, node.host, node.port, node.connections);
+                 typeStr, host, port, connections);
 
         auto &pool = pools_[type];
 
+        // 4. 初始化连接池
         if (!pool.IsInitialized())
         {
-            pool.Init(io, node.host, node.port, node.connections);
+            pool.Init(io, host, port, connections);
         }
         else
         {
-            LOG_WARN("[Proxy] Duplicate backend type: {}", node.typeStr);
+            // 注意：如果你的配置文件里一个 LOGIN 类型配了多行，这里会报重复
+            LOG_WARN("[Proxy] Duplicate backend type: {}. Overwriting or ignoring might happen depending on pool logic.", typeStr);
         }
+    }
+
+    if (pools_.empty())
+    {
+        LOG_ERROR("[Proxy] No backend pools initialized! Gateway will have no where to forward packets.");
     }
 }
 
 void ProxyService::ForwardToBackend(
-    std::shared_ptr<GatewayConnection> client,
+    std::shared_ptr<Connection> client,
     uint16_t msgId,
     const char *data,
     size_t len)
 {
-    // 1. 获取核心状态
     uint32_t sid = client->GetSessionId();
-    uint32_t ip = client->GetRemoteIP();
-    // 🔥 限流检查（第一道防线）
-    if (!RateLimiter::Instance().Allow(sid, ip))
-    {
-        LOG_WARN("[RateLimit] Blocked request: sid={}, ip={}", sid, ip);
-        Metrics::Instance().Inc(MetricId::RateLimitHit);
-        // 可选：返回错误包
-        client->SendRaw(msgId, nullptr, 0);
-        return;
-    }
 
-    uint32_t seqId = client->NextSeqId(); // 🔥 获取递增序列号，解决高并发覆盖问题
+    uint32_t seqId = client->NextSeqId();
 
-    // 2. 路由决策 (确定去哪个类型的服务器)
     auto type = MessageRouter::Instance().Route(msgId);
     if (type == ServerType::UNKNOWN)
     {
-        LOG_WARN("[Proxy] Unmapped MsgId: {}. Discarding.", msgId);
+        LOG_WARN("[Proxy] Unknown msgId {}", msgId);
         return;
     }
 
     auto it = pools_.find(type);
     if (it == pools_.end())
     {
-        LOG_ERROR("[Proxy] Pool for Type {} not initialized", (int)type);
+        LOG_ERROR("[Proxy] Pool not found");
         return;
     }
 
-    // 3. 物理分片决策 (确保有状态路由)
     uint32_t shardId = ShardManager::Instance().GetOrAssignShard(sid);
     auto backend = it->second.AcquireByShard(shardId);
-
     if (!backend)
     {
-        Metrics::Instance().Inc(MetricId::ProxyForwardFail);
-        LOG_ERROR("[Proxy] No backend available for shard {}", shardId);
-        // todo: 给客户端回发系统繁忙的错误包
+        LOG_ERROR("[Proxy] No backend available");
         return;
     }
 
-    // 4. 🔥 注册请求生命周期 (超时监控开始)
     RequestManager::Instance().Add(sid, msgId, seqId);
 
-    // 5. 登记 Session 映射
     {
         std::lock_guard<std::mutex> lock(mtx_);
-        sessions_[sid] = std::weak_ptr<GatewayConnection>(client);
+        sessions_[sid] = client;
     }
 
-    // 6. 协议封装与转发
     InternalPacket pkt;
     pkt.SetSessionId(sid);
     pkt.SetMessageId(msgId);
-    pkt.SetSequenceId(seqId); // 🔥 必须注入 seqId
+    pkt.SetSequenceId(seqId);
     pkt.Append(data, len);
 
-    LOG_DEBUG("[FLOW] C->G sid={} msgId={} seqId={}", sid, msgId, seqId);
-    Metrics::Instance().Inc(MetricId::ProxyForwardTotal);
     backend->Send(std::make_shared<std::vector<char>>(pkt.Serialize()));
 }
 
@@ -119,42 +122,32 @@ void ProxyService::OnBackendReply(
     const char *data,
     size_t len)
 {
-    // 1. 🔥 迟到包拦截 & 取消超时定时器
-    bool isRequestValid = RequestManager::Instance().OnReply(sid, msgId, seqId);
-    if (!isRequestValid)
-    {
-        LOG_WARN("[Proxy] Late packet dropped sid={}, msgId={}, seqId={}", sid, msgId, seqId);
-        return; // 直接丢弃，防止客户端状态机混乱
-    }
+    if (!RequestManager::Instance().OnReply(sid, msgId, seqId))
+        return;
 
-    Metrics::Instance().Inc(MetricId::ProxyReplyTotal);
-    std::shared_ptr<GatewayConnection> client;
+    std::shared_ptr<Connection> client;
 
-    // 2. 查找并锁定对应的客户端连接
     {
         std::lock_guard<std::mutex> lock(mtx_);
         auto it = sessions_.find(sid);
         if (it != sessions_.end())
         {
-            client = it->second.lock(); // 尝试提升弱引用
+            client = it->second.lock();
             if (!client)
-            {
-                // 如果对象已被销毁，顺手清理悬空指针
                 sessions_.erase(it);
-            }
         }
     }
 
-    // 3. 如果玩家已掉线，丢弃包
     if (!client)
-    {
-        LOG_DEBUG("[Proxy] Session expired. Reply dropped. sid={}", sid);
         return;
-    }
-    
-    LOG_DEBUG("[FLOW] G->C sid={} msgId={} seqId={}", sid, msgId, seqId);
-    // 4. 完美闭环：将数据透传回客户端
-    client->SendRaw(msgId, data, len);
+
+    InternalPacket pkt;
+    pkt.SetSessionId(sid);
+    pkt.SetMessageId(msgId);
+    pkt.SetSequenceId(seqId);
+    pkt.Append(data, len);
+
+    client->SendRaw(std::make_shared<std::vector<char>>(pkt.Serialize()));
 }
 
 void ProxyService::RemoveSession(uint32_t sid)

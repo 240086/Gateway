@@ -1,5 +1,4 @@
 #include "core/IdleManager.h"
-#include "core/GatewayConnection.h"
 #include "proxy/ProxyService.h"
 #include "common/logger/Logger.h"
 
@@ -19,7 +18,7 @@ void IdleManager::Init(boost::asio::io_context &io, uint64_t timeoutMs)
     Tick();
 }
 
-void IdleManager::Add(uint32_t sid, std::shared_ptr<GatewayConnection> conn)
+void IdleManager::Add(uint32_t sid, std::shared_ptr<Connection> conn)
 {
     size_t idx = GetShard(sid);
     std::lock_guard<std::mutex> lock(shards_[idx].mtx);
@@ -70,7 +69,7 @@ void IdleManager::Tick()
                                        }
 
                                        // 🔥 修复点 3：现在两边都是 uint64_t，可以直接相减并比较
-                                       if (now_us - conn->GetLastActiveTime() > timeout_us)
+                                       if (now_us - conn->GetLastActiveTimeUs() > timeout_us)
                                        {
                                            expired_sids.push_back(it->first);
                                            it = shards_[i].conns.erase(it); // 从管理器移除

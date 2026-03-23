@@ -1,29 +1,37 @@
 #include <boost/asio.hpp>
 #include <iostream>
 #include <memory>
+#include <csignal>
 
-#include "core/GatewayServer.h"
-#include "proxy/ProxyService.h"
-#include "router/MessageRouter.h"
+// AnimeCore / 基础设施
 #include "common/config/Config.h"
 #include "common/logger/Logger.h"
 #include "common/metrics/MetricsReporter.h"
+#include "network/TcpServer.h"
+#include "network/Connection.h"
+#include "network/asio/AsioContextPool.h"
+
+// 网关核心
+#include "proxy/ProxyService.h"
+#include "router/MessageRouter.h"
 #include "limit/RateLimiter.h"
 #include "session/RequestManager.h"
 #include "core/IdleManager.h"
 
+using tcp = boost::asio::ip::tcp;
+
 /**
- * @brief 优雅退出逻辑：停止 IO 循环并清理资源
+ * @brief 优雅退出逻辑
  */
-void GracefulExit(boost::asio::io_context &io, GatewayServer &server)
+void GracefulExit(boost::asio::io_context &io,
+                  std::shared_ptr<TcpServer> server)
 {
     LOG_INFO("----------------------------------------------");
     LOG_INFO("Shutting down Gateway Server...");
 
-    // 1. 停止接收新连接
-    server.Stop();
+    if (server)
+        server->Stop();
 
-    // 2. 停止 IO 循环（这会让 io.run() 返回）
     io.stop();
 
     LOG_INFO("Gateway Server stopped gracefully.");
@@ -36,62 +44,155 @@ int main()
 
     try
     {
-        if (!Config::Instance().Load("gateway.yaml"))
+        auto &config = Config::Instance();
+        if (!config.Load("gateway.yaml"))
         {
-            LOG_FATAL("Critical: Cannot find gateway.yaml. Gateway terminated.");
+            LOG_FATAL("Critical: Cannot find gateway.yaml.");
             return 1;
         }
 
-        auto &config = Config::Instance();
-        boost::asio::io_context io;
+        boost::asio::io_context mainIo;
 
-        MetricsReporter reporter(io);
+        // 🔥 线程池（关键）
+        int workerThreads = config.GetValue<int>("server.worker_threads", 4);
+        AsioContextPool contextPool(workerThreads);
+
+        // --------------------------------------------------------
+        // 📊 Metrics
+        // --------------------------------------------------------
+        MetricsReporter reporter(mainIo);
         reporter.Start();
 
         // --------------------------------------------------------
-        // 🔥 基础设施初始化 (Infrastructure Init)
+        // 🔥 基础组件初始化
         // --------------------------------------------------------
 
         RateLimiter::Instance().Init(
-            config.GetIpQps(),
-            config.GetIpBurst(),
-            config.GetSidQps(),
-            config.GetSidBurst());
+            config.GetValue<int>("limit.ip_qps", 10000),
+            config.GetValue<int>("limit.ip_burst", 10000),
+            config.GetValue<int>("limit.sid_qps", 1000),
+            config.GetValue<int>("limit.sid_burst", 1000));
 
-        RequestManager::Instance().Init(io, config.GetBackendRequestTimeout());
-        IdleManager::Instance().Init(io, config.GetClientIdleTimeout());
+        RequestManager::Instance().Init(
+            mainIo,
+            config.GetValue<int>("timeout.backend_request_ms", 1500));
 
-        // --------------------------------------------------------
-        // 🎮 业务组件初始化 (Business Logic Init)
-        // --------------------------------------------------------
+        IdleManager::Instance().Init(
+            mainIo,
+            config.GetValue<int>("timeout.client_idle_ms", 60000));
 
         MessageRouter::Instance().Init();
-        ProxyService::Instance().Init(io);
+        ProxyService::Instance().Init(mainIo);
 
-        int gPort = config.GetGatewayPort();
-        GatewayServer server(io, gPort);
-        server.Start();
+        // --------------------------------------------------------
+        // 🔥 Gateway（核心替代）
+        // --------------------------------------------------------
 
-        boost::asio::signal_set signals(io, SIGINT, SIGTERM);
-        signals.async_wait([&io, &server](const boost::system::error_code &ec, int signal_number)
-                           {
-            if (!ec) {
-                LOG_INFO("Signal {} received.", signal_number);
-                GracefulExit(io, server);
-            } });
+        int gPort = config.GetValue<int>("server.listen_port", 10000);
 
+        auto server = std::make_shared<TcpServer>(
+            mainIo,
+            contextPool,
+            gPort,
+
+            // 🔹 Connection Factory
+            [](boost::asio::io_context &io)
+            {
+                return std::make_shared<Connection>(io);
+            },
+
+            // 🔥 Gateway逻辑注入（核心）
+            [](const std::shared_ptr<Connection> &conn)
+            {
+                static std::atomic<uint64_t> sidGen{1000};
+
+                uint64_t sid = sidGen++;
+
+                conn->SetSessionId(sid);
+                conn->SetConnectionId(sid);
+
+                IdleManager::Instance().Add(sid, conn);
+
+                LOG_INFO("[Gateway] New connection sid={}", sid);
+
+                Callbacks cb;
+
+                // -----------------------------
+                // 收包 → 转发到后端
+                // -----------------------------
+                cb.onPacket =
+                    [](const std::shared_ptr<Connection> &conn,
+                       uint16_t msgId,
+                       const char *data,
+                       size_t len)
+                {
+                    ProxyService::Instance().ForwardToBackend(
+                        conn, msgId, data, len);
+                };
+
+                // -----------------------------
+                // 断开连接
+                // -----------------------------
+                cb.onClosed =
+                    [](const std::shared_ptr<Connection> &conn,
+                       uint64_t cid,
+                       uint64_t sid)
+                {
+                    ProxyService::Instance().RemoveSession(sid);
+                    IdleManager::Instance().Remove(sid);
+
+                    LOG_INFO("[Gateway] Disconnected sid={}", sid);
+                };
+
+                // -----------------------------
+                // Session清理（超时 / 异步）
+                // -----------------------------
+                cb.onSessionCleanup =
+                    [](uint64_t sid)
+                {
+                    ProxyService::Instance().RemoveSession(sid);
+                };
+
+                conn->SetCallbacks(std::move(cb));
+            });
+
+        server->StartAccept();
+
+        // --------------------------------------------------------
+        // 🔥 信号处理
+        // --------------------------------------------------------
+        boost::asio::signal_set signals(mainIo, SIGINT, SIGTERM);
+
+        signals.async_wait(
+            [&mainIo, server](const boost::system::error_code &ec, int sig)
+            {
+                if (!ec)
+                {
+                    LOG_INFO("Signal {} received.", sig);
+                    GracefulExit(mainIo, server);
+                }
+            });
+
+        // --------------------------------------------------------
+        // 🚀 启动信息
+        // --------------------------------------------------------
         LOG_INFO("================================================");
-        LOG_INFO("AnimeGame Gateway Server [Active]");
+        LOG_INFO("AnimeGame Gateway Server [ACTIVE]");
+        LOG_INFO("Node Name      : {}", config.GetValue<std::string>("server.name", "Gateway"));
+        LOG_INFO("Node ID        : {}", config.GetValue<int>("server.id", 1));
         LOG_INFO("Listen Port    : {}", gPort);
-        LOG_INFO("Worker Threads : {}", config.GetWorkerThreads());
-        LOG_INFO("Config Status  : Loaded Successfully");
+        LOG_INFO("Worker Threads : {}", workerThreads);
         LOG_INFO("================================================");
 
-        io.run();
+        // 🔥 启动线程池
+        contextPool.Run();
+
+        // 主线程跑 accept + timer
+        mainIo.run();
     }
     catch (const std::exception &e)
     {
-        LOG_FATAL("Gateway Service crashed: {}", e.what());
+        LOG_FATAL("Gateway crashed: {}", e.what());
         return 1;
     }
 

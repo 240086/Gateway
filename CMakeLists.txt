@@ -15,7 +15,6 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/../AnimeCore ${CMAKE_BINARY_DIR}/AnimeCore)
 file(GLOB_RECURSE GATEWAY_SRC
     "src/core/*.cpp"
     "src/proxy/*.cpp"
-    "src/config/*.cpp"
     "src/router/*.cpp"
     "src/session/*.cpp"
     "src/limit/*.cpp"

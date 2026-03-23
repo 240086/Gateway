@@ -1,6 +1,8 @@
 server:
   listen_port: 10000
   worker_threads: 4
+  name: Gateway
+  id: 1
 
 backend:
   game_servers:
@@ -14,15 +16,15 @@ backend:
       connections: 4
 
 routing:
-  login_range: [100, 999]    # 转发至 LOGIN 节点
-  game_range: [1000, 4999]   # 转发至 GAME 节点
+  login_range: [100, 999] # 转发至 LOGIN 节点
+  game_range: [1000, 4999] # 转发至 GAME 节点
 
 timeout:
   backend_request_ms: 1500
   client_idle_ms: 60000
 
 limit:
-  ip_qps: 200
-  ip_burst: 400
-  sid_qps: 50
-  sid_burst: 100
+  ip_qps: 10000 # 暂时调高，允许每秒处理一万次请求
+  ip_burst: 10000
+  sid_qps: 1000 # 每个 Session 的频率
+  sid_burst: 1000
