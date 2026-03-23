@@ -5,8 +5,6 @@ Gateway
 ├─ gateway.yaml
 ├─ include
 │  ├─ core
-│  │  ├─ GatewayConnection.h
-│  │  ├─ GatewayServer.h
 │  │  └─ IdleManager.h
 │  ├─ limit
 │  │  └─ RateLimiter.h
@@ -24,8 +22,6 @@ Gateway
 │  └─ server_log_2026-03-21.txt
 ├─ src
 │  ├─ core
-│  │  ├─ GatewayConnection.cpp
-│  │  ├─ GatewayServer.cpp
 │  │  └─ IdleManager.cpp
 │  ├─ limit
 │  │  └─ RateLimiter.cpp
@@ -67,14 +63,11 @@ Gateway
       │     │  ├─ InternalPacket.h
       │     │  ├─ InternalPacketParser.h
       │     │  ├─ MessageId.h
-      │     │  ├─ Packet.h
       │     │  ├─ PacketParser.h
       │     │  └─ ProtoMessage.h
       │     └─ TcpServer.h
       ├─ src
       │  ├─ common
-      │  │  ├─ config
-      │  │  │  └─ Config.cpp
       │  │  ├─ logger
       │  │  │  └─ Logger.cpp
       │  │  ├─ metrics
@@ -92,7 +85,6 @@ Gateway
       │     ├─ protocol
       │     │  ├─ InternalPacket.cpp
       │     │  ├─ InternalPacketParser.cpp
-      │     │  ├─ Packet.cpp
       │     │  └─ PacketParser.cpp
       │     └─ TcpServer.cpp
       └─ Structure.md
