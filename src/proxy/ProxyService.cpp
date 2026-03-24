@@ -13,57 +13,72 @@ ProxyService &ProxyService::Instance()
     return instance;
 }
 
+#include "proxy/ProxyService.h"
+#include "common/config/Config.h"
+#include "common/logger/Logger.h"
+
 void ProxyService::Init(boost::asio::io_context &io)
 {
-    auto &config = Config::Instance();
+    // 1. 获取 Config 单例
+    const auto &config = Config::Instance();
 
-    // 1. 获取 backend.game_servers 列表节点
-    auto serversNode = config.GetNode("backend.game_servers");
+    // 2. 获取后端列表
+    // 使用 GetValue<std::vector<YAML::Node>> 获取整个列表
+    // 如果路径不存在或不是列表，GetValue 会触发 catch 并返回空的 vector
+    YAML::Node servers = config.GetNode("backend.game_servers");
 
-    // 2. 检查节点是否有效（是一个列表）
-    if (!serversNode.IsSequence())
+    if (!servers || !servers.IsSequence())
     {
-        LOG_ERROR("[Proxy] backend.game_servers is missing or not a list in config!");
+        LOG_ERROR("[Proxy] backend.game_servers is missing or not a list!");
         return;
     }
 
     // 3. 遍历列表中的每一个服务器配置项
-    for (const auto &item : serversNode)
+    for (size_t i = 0; i < servers.size(); ++i)
     {
-        // 从当前 item 节点中解析具体字段，并提供默认值
-        std::string typeStr = item["type"].as<std::string>("UNKNOWN");
-        std::string host = item["host"].as<std::string>("127.0.0.1");
-        int port = item["port"].as<int>(9000);
-        int connections = item["connections"].as<int>(1);
+        const YAML::Node &item = servers[i];
 
-        // 转换类型
-        ServerType type = StringToServerType(typeStr);
-        if (type == ServerType::UNKNOWN)
+        try
         {
-            LOG_ERROR("[Proxy] Ignoring unknown server type in config: {}", typeStr);
-            continue;
+            // 直接使用 item["key"].as<T>(default) 获取具体字段
+            // 注意：这里不需要 template 关键字，因为 item 是具体的 YAML::Node 对象
+            std::string typeStr = item["type"] ? item["type"].as<std::string>() : "UNKNOWN";
+            std::string host = item["host"] ? item["host"].as<std::string>() : "127.0.0.1";
+            int port = item["port"] ? item["port"].as<int>() : 9000;
+            int connections = item["connections"] ? item["connections"].as<int>() : 1;
+
+            // 转换类型
+            ServerType type = StringToServerType(typeStr);
+            if (type == ServerType::UNKNOWN)
+            {
+                LOG_ERROR("[Proxy] Ignoring unknown server type at index {}: {}", i, typeStr);
+                continue;
+            }
+
+            LOG_INFO("[Proxy] Initializing Pool: [{}] -> {}:{} (Conns: {})",
+                     typeStr, host, port, connections);
+
+            // 4. 初始化连接池
+            auto &pool = pools_[type];
+
+            if (!pool.IsInitialized())
+            {
+                pool.Init(io, host, port, connections);
+            }
+            else
+            {
+                LOG_WARN("[Proxy] Duplicate backend type [{}], skipping extra config.", typeStr);
+            }
         }
-
-        LOG_INFO("[Proxy] Initializing Pool: [{}] -> {}:{} (Conns: {})",
-                 typeStr, host, port, connections);
-
-        auto &pool = pools_[type];
-
-        // 4. 初始化连接池
-        if (!pool.IsInitialized())
+        catch (const std::exception &e)
         {
-            pool.Init(io, host, port, connections);
-        }
-        else
-        {
-            // 注意：如果你的配置文件里一个 LOGIN 类型配了多行，这里会报重复
-            LOG_WARN("[Proxy] Duplicate backend type: {}. Overwriting or ignoring might happen depending on pool logic.", typeStr);
+            LOG_ERROR("[Proxy] Failed to parse backend node at index {}: {}", i, e.what());
         }
     }
 
     if (pools_.empty())
     {
-        LOG_ERROR("[Proxy] No backend pools initialized! Gateway will have no where to forward packets.");
+        LOG_ERROR("[Proxy] No backend pools initialized! Gateway has nowhere to forward packets.");
     }
 }
 

@@ -34,8 +34,8 @@ target_link_libraries(gateway PRIVATE AnimeCore)
 
 # 自动拷贝配置文件到 build 目录
 configure_file(
-    "${CMAKE_SOURCE_DIR}/gateway.yaml"
-    "${CMAKE_BINARY_DIR}/gateway.yaml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/gateway.yaml"
+    "${CMAKE_CURRENT_BINARY_DIR}/gateway.yaml"
     COPYONLY
 )
 

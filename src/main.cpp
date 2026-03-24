@@ -41,16 +41,27 @@ void GracefulExit(boost::asio::io_context &io,
 
 int main()
 {
+    // 1. 先加载配置
+    auto &config = Config::Instance();
+    bool loaded = config.Load("gateway.yaml");
+
+    // 2. 再初始化日志
     Logger::Init();
+
+    if (!loaded)
+    {
+        LOG_FATAL("Config load failed!");
+        return 1;
+    }
 
     try
     {
-        auto &config = Config::Instance();
-        if (!config.Load("gateway.yaml"))
-        {
-            LOG_FATAL("Critical: Cannot find gateway.yaml.");
-            return 1;
-        }
+        // auto &config = Config::Instance();
+        // if (!config.Load("gateway.yaml"))
+        // {
+        //     LOG_FATAL("Critical: Cannot find gateway.yaml.");
+        //     return 1;
+        // }
 
         boost::asio::io_context mainIo;
 
@@ -123,7 +134,7 @@ int main()
                 // -----------------------------
                 // 收包 → 转发到后端
                 // -----------------------------
-                cb.onPacket = [](const std::shared_ptr<Connection> &conn, std::shared_ptr<IMessage> msg)
+                cb.onPacket = [](const std::shared_ptr<Connection> &conn, std::shared_ptr<anime::IMessage> msg)
                 {
                     uint16_t msgId = msg->GetMsgId();
                     const char *data = msg->GetData();

@@ -94,7 +94,7 @@ void BackendConnection::DoRead()
                                            recvBuffer_.Append(buffer->data(), len);
 
                                            // 2. 准备一个临时容器接收解析出来的消息对象
-                                           std::vector<std::shared_ptr<IMessage>> messages;
+                                           std::vector<std::shared_ptr<anime::IMessage>> messages;
 
                                            // 3. ✅ 调用新接口
                                            internalParser_.Parse(recvBuffer_, messages);
