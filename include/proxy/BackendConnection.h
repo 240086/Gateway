@@ -37,6 +37,7 @@ public:
     void Send(std::shared_ptr<std::vector<char>> packet);
 
 private:
+    void DoResolve();
     void DoConnect();
     void DoRead();
     void DoWrite();
@@ -49,6 +50,8 @@ private:
 
 private:
     boost::asio::ip::tcp::socket socket_;
+    boost::asio::ip::tcp::resolver resolver_;
+    boost::asio::ip::tcp::resolver::results_type endpoints_;
     boost::asio::steady_timer reconnectTimer_;
 
     // endpoint cache（用于重连）
@@ -61,8 +64,10 @@ private:
     // 收包
     RecvBuffer recvBuffer_;
     InternalPacketParser internalParser_;
+    char buffer_[8192];
 
     // 写队列（关键！）
+    size_t maxQueueSize_ = 10000;
     std::deque<std::shared_ptr<std::vector<char>>> writeQueue_;
     boost::asio::strand<boost::asio::io_context::executor_type> strand_;
 

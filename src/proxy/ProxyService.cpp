@@ -1,6 +1,7 @@
 #include "proxy/ProxyService.h"
 #include "common/logger/Logger.h"
 #include "network/protocol/InternalPacket.h"
+#include "network/protocol/ClientPacket.h"
 #include "common/config/Config.h"
 #include "router/ShardManager.h"
 #include "session/RequestManager.h"
@@ -13,23 +14,39 @@ ProxyService &ProxyService::Instance()
     return instance;
 }
 
-#include "proxy/ProxyService.h"
-#include "common/config/Config.h"
-#include "common/logger/Logger.h"
-
-void ProxyService::Init(boost::asio::io_context &io)
+void ProxyService::Init(AsioContextPool &pool)
 {
     // 1. 获取 Config 单例
     const auto &config = Config::Instance();
 
-    // 2. 获取后端列表
-    // 使用 GetValue<std::vector<YAML::Node>> 获取整个列表
-    // 如果路径不存在或不是列表，GetValue 会触发 catch 并返回空的 vector
     YAML::Node servers = config.GetNode("backend.game_servers");
+
+    if (!servers || !servers.IsDefined())
+        servers = config.GetNode("backend.servers");
+    if (!servers || !servers.IsDefined())
+        servers = config.GetNode("proxy.game_servers");
 
     if (!servers || !servers.IsSequence())
     {
-        LOG_ERROR("[Proxy] backend.game_servers is missing or not a list!");
+        LOG_WARN("[Proxy] backend servers config missing or not a list! Using safe defaults.");
+        LOG_WARN("[Proxy] Tried keys: backend.game_servers, backend.servers, proxy.game_servers");
+
+        const std::string host = config.GetValue<std::string>("backend.default_host", "127.0.0.1");
+        const int loginPort = config.GetValue<int>("backend.default_login_port", 9000);
+        const int gamePort = config.GetValue<int>("backend.default_game_port", 9000);
+        const int loginConns = config.GetValue<int>("backend.default_login_connections", 1);
+        const int gameConns = config.GetValue<int>("backend.default_game_connections", 1);
+
+        auto &loginPool = pools_[ServerType::LOGIN];
+        if (!loginPool.IsInitialized())
+            loginPool.Init(pool, host, loginPort, loginConns);
+
+        auto &gamePool = pools_[ServerType::GAME];
+        if (!gamePool.IsInitialized())
+            gamePool.Init(pool, host, gamePort, gameConns);
+
+        LOG_INFO("[Proxy] Default pools initialized: LOGIN {}:{} ({}), GAME {}:{} ({})",
+                 host, loginPort, loginConns, host, gamePort, gameConns);
         return;
     }
 
@@ -59,11 +76,11 @@ void ProxyService::Init(boost::asio::io_context &io)
                      typeStr, host, port, connections);
 
             // 4. 初始化连接池
-            auto &pool = pools_[type];
+            auto &BackendPool_ = pools_[type];
 
-            if (!pool.IsInitialized())
+            if (!BackendPool_.IsInitialized())
             {
-                pool.Init(io, host, port, connections);
+                BackendPool_.Init(pool, host, port, connections);
             }
             else
             {
@@ -89,7 +106,6 @@ void ProxyService::ForwardToBackend(
     size_t len)
 {
     uint32_t sid = client->GetSessionId();
-
     uint32_t seqId = client->NextSeqId();
 
     auto type = MessageRouter::Instance().Route(msgId);
@@ -108,7 +124,7 @@ void ProxyService::ForwardToBackend(
 
     uint32_t shardId = ShardManager::Instance().GetOrAssignShard(sid);
     auto backend = it->second.AcquireByShard(shardId);
-    if (!backend)
+    if (!backend || !backend->IsAvailable())
     {
         LOG_ERROR("[Proxy] No backend available");
         return;
@@ -156,13 +172,12 @@ void ProxyService::OnBackendReply(
     if (!client)
         return;
 
-    InternalPacket pkt;
-    pkt.SetSessionId(sid);
+    ClientPacket pkt;
     pkt.SetMessageId(msgId);
-    pkt.SetSequenceId(seqId);
-    pkt.Append(data, len);
+    pkt.Append(data, len); // 将后端返回的 body 数据追加进去
 
-    client->SendRaw(std::make_shared<std::vector<char>>(pkt.Serialize()));
+    auto sendBuf = std::make_shared<std::vector<char>>(pkt.Serialize());
+    client->SendRaw(sendBuf);
 }
 
 void ProxyService::RemoveSession(uint32_t sid)

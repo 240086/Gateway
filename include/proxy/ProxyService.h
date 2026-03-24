@@ -8,6 +8,7 @@
 #include "proxy/BackendPool.h"
 #include "router/MessageRouter.h"
 #include "network/Connection.h"
+#include "network/asio/AsioContextPool.h"
 
 class ProxyService
 {
@@ -15,7 +16,7 @@ public:
     static ProxyService &Instance();
 
     // 初始化多个后端连接池
-    void Init(boost::asio::io_context &io);
+    void Init(AsioContextPool &pool);
 
     // 接收来自客户端的数据，转发给对应的后端
     void ForwardToBackend(std::shared_ptr<Connection> client,
@@ -45,5 +46,4 @@ private:
 
     // 🔥 必须使用 weak_ptr！防止 Connection 的循环引用导致内存泄漏
     std::unordered_map<uint32_t, std::weak_ptr<Connection>> sessions_;
-
 };

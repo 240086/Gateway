@@ -4,6 +4,7 @@
 #include <atomic>
 #include <mutex>
 #include "proxy/BackendConnection.h"
+#include "network/asio/AsioContextPool.h"
 
 class BackendPool
 {
@@ -12,14 +13,14 @@ public:
     BackendPool(const BackendPool &) = delete;
     BackendPool &operator=(const BackendPool &) = delete;
 
-    void Init(boost::asio::io_context &io,
+    void Init(AsioContextPool &pool,
               const std::string &host,
               uint16_t port,
               size_t size);
 
     std::shared_ptr<BackendConnection> AcquireByShard(uint32_t shardId);
 
-        bool IsInitialized() const
+    bool IsInitialized() const
     {
         return initialized_;
     }

@@ -3,6 +3,7 @@
 #include "common/logger/Logger.h"
 #include "common/metrics/Metrics.h"
 #include "network/protocol/InternalPacket.h"
+#include "common/thread/GlobalThreadPool.h"
 #include <iostream>
 
 using boost::asio::ip::tcp;
@@ -10,7 +11,8 @@ using boost::asio::ip::tcp;
 BackendConnection::BackendConnection(boost::asio::io_context &io)
     : socket_(io),
       reconnectTimer_(io),
-      strand_(boost::asio::make_strand(io))
+      strand_(boost::asio::make_strand(io)),
+      resolver_(io)
 {
 }
 
@@ -18,11 +20,10 @@ void BackendConnection::Connect(const std::string &host, uint16_t port)
 {
     host_ = host;
     port_ = port;
-
-    DoConnect();
+    DoResolve();
 }
 
-void BackendConnection::DoConnect()
+void BackendConnection::DoResolve()
 {
     if (state_ == State::CONNECTING || state_ == State::CONNECTED)
         return;
@@ -31,17 +32,38 @@ void BackendConnection::DoConnect()
 
     auto self = shared_from_this();
 
-    boost::asio::ip::tcp::resolver resolver(socket_.get_executor());
-    auto endpoints = resolver.resolve(host_, std::to_string(port_));
-    boost::asio::async_connect(socket_, endpoints,
+    resolver_.async_resolve(host_, std::to_string(port_),
+                            boost::asio::bind_executor(strand_,
+                                                       [this, self](boost::system::error_code ec, tcp::resolver::results_type endpoints)
+                                                       {
+                                                           if (!ec)
+                                                           {
+                                                               endpoints_ = std::move(endpoints); // ✅ 保存
+                                                               DoConnect();                       // ✅ 不再传参
+                                                           }
+                                                           else
+                                                           {
+                                                               LOG_ERROR("[Backend] Resolve failed: {}", ec.message());
+                                                               OnFailure();
+                                                               ScheduleReconnect();
+                                                           }
+                                                       }));
+}
+
+// 2. 修改后的 DoConnect，不再包含同步代码
+void BackendConnection::DoConnect()
+{
+    auto self = shared_from_this();
+
+    boost::asio::async_connect(socket_, endpoints_,
                                boost::asio::bind_executor(strand_,
-                                                          [this, self](boost::system::error_code ec, auto)
+                                                          [this, self](boost::system::error_code ec, const tcp::endpoint &endpoint)
                                                           {
                                                               if (!ec)
                                                               {
                                                                   state_ = State::CONNECTED;
                                                                   LOG_INFO("[Backend] Connected to {}:{}", host_, port_);
-
+                                                                  failCount_ = 0;
                                                                   DoRead();
                                                               }
                                                               else
@@ -68,6 +90,12 @@ void BackendConnection::Send(std::shared_ptr<std::vector<char>> packet)
                       {
                           if (state_ != State::CONNECTED)
                               return;
+                          if (writeQueue_.size() >= maxQueueSize_)
+                          {
+                              LOG_WARN("[Backend] Write queue full, dropping packet.");
+                              return;
+                          }
+
                           bool writing = !writeQueue_.empty();
                           writeQueue_.push_back(packet);
 
@@ -81,49 +109,70 @@ void BackendConnection::Send(std::shared_ptr<std::vector<char>> packet)
 void BackendConnection::DoRead()
 {
     auto self = shared_from_this();
-    auto buffer = std::make_shared<std::array<char, 4096>>();
+    // 💡 优化 1：使用类的成员 buffer_ (8192) 替代频繁的 shared_ptr 分配
+    // 假设你在头文件定义了 char buffer_[8192];
 
     socket_.async_read_some(
-        boost::asio::buffer(*buffer),
+        boost::asio::buffer(buffer_),
         boost::asio::bind_executor(strand_,
-                                   [this, self, buffer](boost::system::error_code ec, std::size_t len)
+                                   [this, self](boost::system::error_code ec, std::size_t len)
                                    {
                                        if (!ec)
                                        {
-                                           // 1. 将原始数据存入 Buffer
-                                           recvBuffer_.Append(buffer->data(), len);
+                                           // 1. 数据入库
+                                           recvBuffer_.Append(buffer_, len);
 
-                                           // 2. 准备一个临时容器接收解析出来的消息对象
-                                           std::vector<std::shared_ptr<anime::IMessage>> messages;
+                                           // 💡 优化 2：预分配大小，减少 vector 扩容频率
+                                           static thread_local std::vector<std::shared_ptr<anime::IMessage>> msgList;
+                                           msgList.clear();
 
-                                           // 3. ✅ 调用新接口
-                                           internalParser_.Parse(recvBuffer_, messages);
+                                           // 2. 解析
+                                           internalParser_.Parse(recvBuffer_, msgList);
 
-                                           // 4. 遍历解析出的消息并处理
-                                           for (auto &msg : messages)
+                                           // 3. 处理
+                                           for (auto &msg : msgList)
                                            {
-                                               // 熔断器计数
                                                OnSuccess();
 
-                                               // 因为是内网包，我们知道它一定是 InternalPacket
+                                               if (msg->GetType() != anime::MessageType::INTERNAL)
+                                               {
+                                                   LOG_ERROR("[Backend] Unexpected message type: {}", (int)msg->GetType());
+                                                   continue;
+                                               }
+
                                                auto internalPkg = std::static_pointer_cast<InternalPacket>(msg);
 
-                                               // 触发 ProxyService 的回包逻辑
-                                               ProxyService::Instance().OnBackendReply(
-                                                   internalPkg->GetSessionId(),
-                                                   internalPkg->GetMsgId(),
-                                                   internalPkg->GetSequenceId(),
+                                               // 🔥 必须拷贝数据（避免buffer复用问题）
+                                               auto data = std::make_shared<std::vector<char>>(
                                                    internalPkg->GetData(),
-                                                   internalPkg->GetDataLen());
+                                                   internalPkg->GetData() + internalPkg->GetDataLen());
+
+                                               auto sessionId = internalPkg->GetSessionId();
+                                               auto msgId = internalPkg->GetMsgId();
+                                               auto seqId = internalPkg->GetSequenceId();
+
+                                               // 🔥 投递到业务线程池
+                                               GlobalThreadPool::Instance().GetPool().Enqueue(
+                                                   [sessionId, msgId, seqId, data]()
+                                                   {
+                                                       ProxyService::Instance().OnBackendReply(
+                                                           sessionId,
+                                                           msgId,
+                                                           seqId,
+                                                           data->data(),
+                                                           data->size());
+                                                   });
                                            }
 
-                                           // 继续下一轮读
                                            DoRead();
                                        }
                                        else
                                        {
-                                           LOG_WARN("[Backend] Connection lost: {}", ec.message());
-                                           HandleClose();
+                                           if (ec != boost::asio::error::operation_aborted)
+                                           {
+                                               LOG_WARN("[Backend] Connection lost: {}", ec.message());
+                                               HandleClose();
+                                           }
                                        }
                                    }));
 }
@@ -220,9 +269,13 @@ bool BackendConnection::IsAvailable() const
 
 void BackendConnection::OnSuccess()
 {
-    Metrics::Instance().Inc(MetricId::CircuitBreakerOpen);
+    Metrics::Instance().Inc(MetricId::CircuitBreakerClose);
+    if (cbState_.load() != CBState::CLOSED)
+    {
+        LOG_INFO("[CircuitBreaker] CLOSED (Recovered)");
+        cbState_.store(CBState::CLOSED, std::memory_order_relaxed);
+    }
     failCount_.store(0, std::memory_order_relaxed);
-    cbState_ = CBState::CLOSED;
 }
 
 void BackendConnection::OnFailure()
@@ -233,7 +286,9 @@ void BackendConnection::OnFailure()
 
     if (fails >= FAIL_THRESHOLD)
     {
-        cbState_ = CBState::OPEN;
-        LOG_WARN("[CircuitBreaker] OPEN triggered");
+        if (cbState_.exchange(CBState::OPEN) != CBState::OPEN)
+        {
+            LOG_WARN("[CircuitBreaker] OPEN triggered (Threshold reached)");
+        }
     }
 }

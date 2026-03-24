@@ -1,7 +1,7 @@
 #include "proxy/BackendPool.h"
 #include "common/logger/Logger.h"
 
-void BackendPool::Init(boost::asio::io_context &io,
+void BackendPool::Init(AsioContextPool &pool,
                        const std::string &host,
                        uint16_t port,
                        size_t size)
@@ -21,6 +21,10 @@ void BackendPool::Init(boost::asio::io_context &io,
 
     for (size_t i = 0; i < size; ++i)
     {
+        // 🔥 每次循环从池里取下一个 io_context
+        // 这样连接 1 在线程 A，连接 2 在线程 B，充分利用多核
+        auto &io = pool.GetIOContext();
+
         auto conn = std::make_shared<BackendConnection>(io);
         conn->Connect(host, port);
         conns_.push_back(conn);

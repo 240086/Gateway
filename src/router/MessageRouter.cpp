@@ -12,31 +12,33 @@ void MessageRouter::Init()
 {
     const auto &config = Config::Instance();
 
-    // 1. 获取 login_range
-    // 注意：GetValue 内部会调用 FindNode("routing.login_range")
-    YAML::Node loginNode = config.GetNode("routing.login_range");
+    // 1) login_range：优先 routing.*，再尝试 router.*，最后使用默认值
+    int loginMin = config.GetValue<int>("routing.login_range.0",
+                                        config.GetValue<int>("router.login_range.0", 100));
+    int loginMax = config.GetValue<int>("routing.login_range.1",
+                                        config.GetValue<int>("router.login_range.1", 999));
 
-    if (loginNode && loginNode.IsSequence() && loginNode.size() >= 2)
+    if (loginMin > loginMax)
     {
-        loginRange_ = {loginNode[0].as<int>(), loginNode[1].as<int>()};
+        LOG_WARN("[Router] login_range invalid ({}>{}), using defaults [100, 999]", loginMin, loginMax);
+        loginMin = 100;
+        loginMax = 999;
     }
-    else
-    {
-        LOG_ERROR("[Router] Invalid login_range config, using defaults [100, 999]");
-        loginRange_ = {100, 999};
-    }
+    loginRange_ = {loginMin, loginMax};
 
-    // 2. 获取 game_range
-    auto gameNode = config.GetNode("routing.game_range");
-    if (gameNode && gameNode.IsSequence() && gameNode.size() >= 2)
+    // 2) game_range：优先 routing.*，再尝试 router.*，最后使用默认值
+    int gameMin = config.GetValue<int>("routing.game_range.0",
+                                       config.GetValue<int>("router.game_range.0", 1000));
+    int gameMax = config.GetValue<int>("routing.game_range.1",
+                                       config.GetValue<int>("router.game_range.1", 4999));
+
+    if (gameMin > gameMax)
     {
-        gameRange_ = {gameNode[0].as<int>(), gameNode[1].as<int>()};
+        LOG_WARN("[Router] game_range invalid ({}>{}), using defaults [1000, 4999]", gameMin, gameMax);
+        gameMin = 1000;
+        gameMax = 4999;
     }
-    else
-    {
-        LOG_ERROR("[Router] Invalid game_range config, using defaults [1000, 4999]");
-        gameRange_ = {1000, 4999};
-    }
+    gameRange_ = {gameMin, gameMax};
 
     LOG_INFO("[Router] Init success: login[{}-{}], game[{}-{}]",
              loginRange_.first, loginRange_.second,

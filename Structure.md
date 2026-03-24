@@ -59,6 +59,8 @@ Gateway
       │     │  └─ RecvBuffer.h
       │     ├─ Connection.h
       │     ├─ protocol
+      │     │  ├─ ClientPacket.h
+      │     │  ├─ ClientPacketParser.h
       │     │  ├─ IMessage.h
       │     │  ├─ InternalPacket.h
       │     │  ├─ InternalPacketParser.h
@@ -83,9 +85,10 @@ Gateway
       │     │  └─ RecvBuffer.cpp
       │     ├─ Connection.cpp
       │     ├─ protocol
+      │     │  ├─ ClientPacket.cpp
+      │     │  ├─ ClientPacketParser.cpp
       │     │  ├─ InternalPacket.cpp
-      │     │  ├─ InternalPacketParser.cpp
-      │     │  └─ PacketParser.cpp
+      │     │  └─ InternalPacketParser.cpp
       │     └─ TcpServer.cpp
       └─ Structure.md
 

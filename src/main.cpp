@@ -2,6 +2,8 @@
 #include <iostream>
 #include <memory>
 #include <csignal>
+#include <filesystem>
+#include <vector>
 
 // AnimeCore / 基础设施
 #include "common/config/Config.h"
@@ -39,11 +41,39 @@ void GracefulExit(boost::asio::io_context &io,
     LOG_INFO("----------------------------------------------");
 }
 
-int main()
+int main(int argc, char **argv)
 {
     // 1. 先加载配置
     auto &config = Config::Instance();
-    bool loaded = config.Load("gateway.yaml");
+    std::vector<std::string> candidateConfigs;
+    candidateConfigs.emplace_back("gateway.yaml");
+    candidateConfigs.emplace_back("./gateway.yaml");
+    candidateConfigs.emplace_back("../gateway.yaml");
+
+    if (argc > 0 && argv && argv[0])
+    {
+        try
+        {
+            auto exePath = std::filesystem::absolute(argv[0]).parent_path() / "gateway.yaml";
+            candidateConfigs.emplace_back(exePath.string());
+        }
+        catch (...)
+        {
+            // ignore path resolve failures
+        }
+    }
+
+    bool loaded = false;
+    std::string loadedPath;
+    for (const auto &path : candidateConfigs)
+    {
+        if (config.Load(path))
+        {
+            loaded = true;
+            loadedPath = path;
+            break;
+        }
+    }
 
     // 2. 再初始化日志
     Logger::Init();
@@ -53,6 +83,9 @@ int main()
         LOG_FATAL("Config load failed!");
         return 1;
     }
+
+    LOG_INFO("[Config] Loaded from: {}", loadedPath);
+    LOG_INFO("[Config] cwd={}", std::filesystem::current_path().string());
 
     try
     {
@@ -73,7 +106,7 @@ int main()
         // 📊 Metrics
         // --------------------------------------------------------
         MetricsReporter reporter(mainIo);
-        reporter.Start();
+        // reporter.Start();
 
         // --------------------------------------------------------
         // 🔥 基础组件初始化
@@ -94,7 +127,7 @@ int main()
             config.GetValue<int>("timeout.client_idle_ms", 60000));
 
         MessageRouter::Instance().Init();
-        ProxyService::Instance().Init(mainIo);
+        ProxyService::Instance().Init(contextPool);
 
         // --------------------------------------------------------
         // 🔥 Gateway（核心替代）
@@ -117,8 +150,10 @@ int main()
             [](const std::shared_ptr<Connection> &conn)
             {
                 static std::atomic<uint64_t> sidGen{1000};
+                uint64_t nodeId = Config::Instance().GetValue<int>("server.id", 1);
+                uint64_t sid = (nodeId << 48) | sidGen++;
 
-                uint64_t sid = sidGen++;
+                // uint64_t sid = sidGen++;
 
                 conn->SetSessionId(sid);
                 conn->SetConnectionId(sid);
@@ -199,6 +234,7 @@ int main()
 
         // 🔥 启动线程池
         contextPool.Run();
+        LOG_INFO("[Gateway] Worker threads is running...");
 
         // 主线程跑 accept + timer
         mainIo.run();
