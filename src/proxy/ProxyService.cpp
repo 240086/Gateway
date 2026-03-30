@@ -155,7 +155,7 @@ void ProxyService::OnBackendReply(
 {
     LOG_DEBUG("[Proxy] RECV BACKEND REPLY: sid={}, msgId={}, seqId={}, len={}", sid, msgId, seqId, len);
     if (!RequestManager::Instance().OnReply(sid, msgId, seqId))
-        return;
+        LOG_WARN("[Proxy] Backend reply has no pending request match, sid={}, msgId={}, seqId={}", sid, msgId, seqId);
 
     std::shared_ptr<Connection> client;
 

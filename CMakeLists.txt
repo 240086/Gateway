@@ -1,6 +1,18 @@
 cmake_minimum_required(VERSION 3.16)
 project(AnimeGateway)
 
+# --- 模式保底逻辑 ---
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build." FORCE)
+    # 设置可选范围（供 GUI 使用）
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
+# 打印当前模式，让你在执行 cmake .. 时一眼看到结果
+message(STATUS "------------------------------------------------")
+message(STATUS "  Build Configuration: ${CMAKE_BUILD_TYPE}")
+message(STATUS "------------------------------------------------")
+
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(spdlog REQUIRED)

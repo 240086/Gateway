@@ -71,6 +71,17 @@ bool RequestManager::OnReply(uint32_t sid, uint16_t msgId, uint32_t seqId)
         }
     }
 
+    // 某些协议使用“请求/响应 msgId 不同”的约定（如 100 -> 110），
+    // 此时按完整 key 无法命中。降级到 sid + seqId 匹配，确保合法响应不被误丢弃。
+    if (!found)
+        found = TryRemoveBySidSeq(sid, seqId, startUs);
+
+    if (!found)
+        found = TryRemoveBySidMsg(sid, msgId, startUs);
+
+    if (!found)
+        found = TryRemoveSinglePendingBySid(sid, startUs);
+
     if (!found)
         return false;
 
@@ -148,4 +159,151 @@ void RequestManager::RemoveSingleRequest(const RequestKey &key)
                 sessionShards_[sIdx].map.erase(it);
         }
     }
+}
+
+bool RequestManager::TryRemoveBySidSeq(uint32_t sid, uint32_t seqId, uint64_t &startUs)
+{
+    size_t sIdx = GetSessShardIdx(sid);
+    std::vector<RequestKey> keys;
+
+    {
+        std::lock_guard<std::mutex> lock(sessionShards_[sIdx].mtx);
+        auto sit = sessionShards_[sIdx].map.find(sid);
+        if (sit == sessionShards_[sIdx].map.end())
+            return false;
+        keys = sit->second;
+    }
+
+    for (const auto &k : keys)
+    {
+        if (k.seqId != seqId)
+            continue;
+
+        size_t rIdx = GetReqShardIdx(k);
+        {
+            std::lock_guard<std::mutex> lock(requestShards_[rIdx].mtx);
+            auto it = requestShards_[rIdx].map.find(k);
+            if (it == requestShards_[rIdx].map.end())
+                continue;
+
+            it->second.timer->cancel();
+            startUs = it->second.startTimeUs;
+            requestShards_[rIdx].map.erase(it);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(sessionShards_[sIdx].mtx);
+            auto sit = sessionShards_[sIdx].map.find(sid);
+            if (sit != sessionShards_[sIdx].map.end())
+            {
+                auto &reqs = sit->second;
+                auto reqIt = std::find(reqs.begin(), reqs.end(), k);
+                if (reqIt != reqs.end())
+                    reqs.erase(reqIt);
+                if (reqs.empty())
+                    sessionShards_[sIdx].map.erase(sit);
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+
+bool RequestManager::TryRemoveBySidMsg(uint32_t sid, uint16_t msgId, uint64_t &startUs)
+{
+    size_t sIdx = GetSessShardIdx(sid);
+    std::vector<RequestKey> keys;
+
+    {
+        std::lock_guard<std::mutex> lock(sessionShards_[sIdx].mtx);
+        auto sit = sessionShards_[sIdx].map.find(sid);
+        if (sit == sessionShards_[sIdx].map.end())
+            return false;
+        keys = sit->second;
+    }
+
+    for (const auto &k : keys)
+    {
+        if (k.msgId != msgId)
+            continue;
+
+        size_t rIdx = GetReqShardIdx(k);
+        {
+            std::lock_guard<std::mutex> lock(requestShards_[rIdx].mtx);
+            auto it = requestShards_[rIdx].map.find(k);
+            if (it == requestShards_[rIdx].map.end())
+                continue;
+
+            it->second.timer->cancel();
+            startUs = it->second.startTimeUs;
+            requestShards_[rIdx].map.erase(it);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(sessionShards_[sIdx].mtx);
+            auto sit = sessionShards_[sIdx].map.find(sid);
+            if (sit != sessionShards_[sIdx].map.end())
+            {
+                auto &reqs = sit->second;
+                auto reqIt = std::find(reqs.begin(), reqs.end(), k);
+                if (reqIt != reqs.end())
+                    reqs.erase(reqIt);
+                if (reqs.empty())
+                    sessionShards_[sIdx].map.erase(sit);
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+
+bool RequestManager::TryRemoveSinglePendingBySid(uint32_t sid, uint64_t &startUs)
+{
+    size_t sIdx = GetSessShardIdx(sid);
+    RequestKey onlyKey{};
+    bool hasSingle = false;
+
+    {
+        std::lock_guard<std::mutex> lock(sessionShards_[sIdx].mtx);
+        auto sit = sessionShards_[sIdx].map.find(sid);
+        if (sit == sessionShards_[sIdx].map.end())
+            return false;
+        if (sit->second.size() != 1)
+            return false;
+
+        onlyKey = sit->second.front();
+        hasSingle = true;
+    }
+
+    if (!hasSingle)
+        return false;
+
+    size_t rIdx = GetReqShardIdx(onlyKey);
+    {
+        std::lock_guard<std::mutex> lock(requestShards_[rIdx].mtx);
+        auto it = requestShards_[rIdx].map.find(onlyKey);
+        if (it == requestShards_[rIdx].map.end())
+            return false;
+
+        it->second.timer->cancel();
+        startUs = it->second.startTimeUs;
+        requestShards_[rIdx].map.erase(it);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(sessionShards_[sIdx].mtx);
+        auto sit = sessionShards_[sIdx].map.find(sid);
+        if (sit != sessionShards_[sIdx].map.end())
+        {
+            auto &reqs = sit->second;
+            auto reqIt = std::find(reqs.begin(), reqs.end(), onlyKey);
+            if (reqIt != reqs.end())
+                reqs.erase(reqIt);
+            if (reqs.empty())
+                sessionShards_[sIdx].map.erase(sit);
+        }
+    }
+    return true;
 }

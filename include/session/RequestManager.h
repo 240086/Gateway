@@ -44,6 +44,9 @@ public:
     void Add(uint32_t sid, uint16_t msgId, uint32_t seqId);
     bool OnReply(uint32_t sid, uint16_t msgId, uint32_t seqId);
     void RemoveSession(uint32_t sid);
+    bool TryRemoveBySidSeq(uint32_t sid, uint32_t seqId, uint64_t &startUs);
+    bool TryRemoveBySidMsg(uint32_t sid, uint16_t msgId, uint64_t &startUs);
+    bool TryRemoveSinglePendingBySid(uint32_t sid, uint64_t &startUs);
 
 private:
     RequestManager() = default;
