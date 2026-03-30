@@ -133,6 +133,9 @@ void BackendConnection::DoRead()
                                            for (auto &msg : msgList)
                                            {
                                                OnSuccess();
+                                               auto internalPkg = std::static_pointer_cast<InternalPacket>(msg);
+                                               LOG_DEBUG("[Network-Debug] RECV FROM GS: sid={}, msgId={}, seqId={}",
+                                                         internalPkg->GetSessionId(), internalPkg->GetMsgId(), internalPkg->GetSequenceId());
 
                                                if (msg->GetType() != anime::MessageType::INTERNAL)
                                                {
@@ -140,7 +143,7 @@ void BackendConnection::DoRead()
                                                    continue;
                                                }
 
-                                               auto internalPkg = std::static_pointer_cast<InternalPacket>(msg);
+                                            //    auto internalPkg = std::static_pointer_cast<InternalPacket>(msg);
 
                                                // 🔥 必须拷贝数据（避免buffer复用问题）
                                                auto data = std::make_shared<std::vector<char>>(

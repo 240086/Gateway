@@ -17,16 +17,14 @@ void RateLimiter::Init(int ipRate, int ipBurst, int sidRate, int sidBurst)
 
 bool RateLimiter::Allow(uint32_t sid, uint32_t ip)
 {
-    // 1. 第一道防线：IP 限流（防止单 IP 疯狂请求，哪怕换 Session 也没用）
-    // 使用 ip 作为 key
-    if (!AllowInternal(static_cast<uint64_t>(ip), ipRate_, ipBurst_))
-    {
+    // 1. IP 限流：高位补 0 (默认)
+    uint64_t ipKey = static_cast<uint64_t>(ip);
+    if (!AllowInternal(ipKey, ipRate_, ipBurst_))
         return false;
-    }
 
-    // 2. 第二道防线：Session 限流（防止单个玩家利用逻辑漏洞刷接口）
-    // 加上一个高位偏移量以区别于 IP key，防止 hash 冲突
-    uint64_t sidKey = (1ULL << 32) | sid;
+    // 2. Session 限流：高位补 1 (染色)
+    // 这样 64 位下，ipKey 永远不会等于 sidKey
+    uint64_t sidKey = (1ULL << 32) | static_cast<uint64_t>(sid);
     return AllowInternal(sidKey, sidRate_, sidBurst_);
 }
 
@@ -64,7 +62,7 @@ bool RateLimiter::AllowInternal(uint64_t key, int rate, int burst)
 
 void RateLimiter::RemoveSid(uint32_t sid)
 {
-    uint64_t sidKey = (1ULL << 32) | sid;
+    uint64_t sidKey = (1ULL << 32) | static_cast<uint64_t>(sid);
     size_t idx = GetShard(sidKey);
     std::lock_guard<std::mutex> lock(shards_[idx].mtx);
     shards_[idx].map.erase(sidKey);

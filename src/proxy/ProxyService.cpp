@@ -153,6 +153,7 @@ void ProxyService::OnBackendReply(
     const char *data,
     size_t len)
 {
+    LOG_DEBUG("[Proxy] RECV BACKEND REPLY: sid={}, msgId={}, seqId={}, len={}", sid, msgId, seqId, len);
     if (!RequestManager::Instance().OnReply(sid, msgId, seqId))
         return;
 

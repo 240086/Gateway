@@ -22,11 +22,16 @@ struct RequestKeyHash
 {
     size_t operator()(const RequestKey &k) const
     {
-        // 改进的哈希组合，防止高位截断
-        size_t hash = k.sid;
-        hash ^= (static_cast<size_t>(k.msgId) << 32);
-        hash ^= (static_cast<size_t>(k.seqId) << 48);
-        return hash;
+        size_t h = 0;
+        // 使用类似 boost::hash_combine 的算法，不要手动位移 48 位
+        auto combine = [&](size_t val)
+        {
+            h ^= val + 0x9e3779b9 + (h << 6) + (h >> 2);
+        };
+        combine(k.sid);
+        combine(k.msgId);
+        combine(k.seqId);
+        return h;
     }
 };
 

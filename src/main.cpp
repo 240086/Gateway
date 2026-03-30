@@ -149,11 +149,8 @@ int main(int argc, char **argv)
             // 🔥 Gateway逻辑注入（核心）
             [](const std::shared_ptr<Connection> &conn)
             {
-                static std::atomic<uint64_t> sidGen{1000};
-                uint64_t nodeId = Config::Instance().GetValue<int>("server.id", 1);
-                uint64_t sid = (nodeId << 48) | sidGen++;
-
-                // uint64_t sid = sidGen++;
+                static std::atomic<uint32_t> sidGen{1000};
+                uint32_t sid = sidGen++;
 
                 conn->SetSessionId(sid);
                 conn->SetConnectionId(sid);
@@ -183,8 +180,8 @@ int main(int argc, char **argv)
                 // -----------------------------
                 cb.onClosed =
                     [](const std::shared_ptr<Connection> &conn,
-                       uint64_t cid,
-                       uint64_t sid)
+                       uint32_t cid,
+                       uint32_t sid)
                 {
                     ProxyService::Instance().RemoveSession(sid);
                     IdleManager::Instance().Remove(sid);
@@ -196,7 +193,7 @@ int main(int argc, char **argv)
                 // Session清理（超时 / 异步）
                 // -----------------------------
                 cb.onSessionCleanup =
-                    [](uint64_t sid)
+                    [](uint32_t sid)
                 {
                     ProxyService::Instance().RemoveSession(sid);
                 };
